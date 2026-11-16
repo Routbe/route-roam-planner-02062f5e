@@ -55,7 +55,7 @@ const insertBooking = (id: string, startHour: number) =>
   db.query(
     `insert into public.bookings (id, event_type_id, host_user_id, start_utc, end_utc, block_start_utc, block_end_utc,
        status, guest_name, guest_email, guest_timezone, ics_uid)
-     values ($1, $2, $3, $4, $5, $4, $5, 'confirmed', 'Guest', 'guest@example.test', 'Europe/Brussels', $1 || '@rout.be')`,
+     values ($1::uuid, $2, $3, $4::timestamptz, $5::timestamptz, $4::timestamptz, $5::timestamptz, 'confirmed', 'Guest', 'guest@example.test', 'Europe/Brussels', $1::text || '@rout.be')`,
     [id, ET, HOST, `2030-01-01T${String(startHour).padStart(2, "0")}:00:00Z`, `2030-01-01T${String(startHour).padStart(2, "0")}:30:00Z`],
   );
 
