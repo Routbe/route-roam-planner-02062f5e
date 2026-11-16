@@ -1,4 +1,4 @@
--- 0265 — EXPAND: immutable, hash-chained and server-signed booking ledger.
+-- 0284 — EXPAND: immutable, hash-chained and server-signed booking ledger.
 --
 -- Every change to public.bookings is written by the database itself into
 -- public.booking_events: no caller can add, skip, edit or remove an event.
