@@ -24,7 +24,7 @@ const LEDGER_SQL = readFileSync(join(ROOT, "db-pending", "0284_booking_ledger.sq
 const HOST = "00000000-0000-4000-8000-0000000000a1";
 const OTHER = "00000000-0000-4000-8000-0000000000b1";
 const ET = "00000000-0000-4000-8000-0000000000e1";
-const PRE = "00000000-0000-4000-8000-00000000f001"; // exists before 0265 runs: imported
+const PRE = "00000000-0000-4000-8000-00000000f001"; // exists before 0284 runs: imported
 const BK = "00000000-0000-4000-8000-00000000f002";
 
 const LEDGER_TABLES = ["booking_events", "booking_event_attestations", "booking_ledger_salts"];

@@ -820,3 +820,6 @@ Let op de naamgeving: de schrijffuncties zijn die van 0278 (`rout_inquiry_create
 
 ## Appendix: 0283 live (2026-11-16)
 0283_workspace_support_page.sql applied via scripts/migration-rollout.ts in one transaction after owner GO; sha256 da6ac832148413692f619dacd6b9e8af1d5b4c6c3cad01f4f4deec31f3139ed7, predecessor 0282, definer guard passed. rout_app executes the six entry points; the three internal helpers are not executable by rout_app or PUBLIC.
+
+## Appendix: booking ledger renumbered 0265 -> 0284 (2026-11-16)
+On the owner's decision the held-back booking ledger is now `db-pending/0284_booking_ledger.sql` (content unchanged apart from its header number; it was never applied, so no checksum on Neon is affected). It has a PGlite isolation test, `src/test/booking-ledger-0284.test.ts`, run on a replay of db/ 0000-0283: rout_app has no table rights on booking_events, booking_ledger_salts or booking_event_attestations; UPDATE/DELETE/TRUNCATE are refused even for the owner; internal helpers are revoked from public and rout_app; every definer is on `pg_catalog, pg_temp`; entry_hash = SHA-256(prev_hash || preimage) matches ledger.ts; deleting a booking deletes its salt and the chain still verifies. Full suite green. Neon untouched. `CODE_SCHEMA_LEVEL` stays 0283 until the file moves into db/ with the live GO.
