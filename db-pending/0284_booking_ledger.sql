@@ -9,11 +9,18 @@
 --   * The preimage is a length-prefixed encoding ("v<len>:<value>" or "n" for
 --     null) of every field, so no value can be crafted to shift a boundary.
 --   * Guest name, e-mail, note, intake answers and payment references never
---     enter the ledger. The event carries detail_commit = SHA-256(salt ||
---     those fields) with a 256-bit salt per booking in booking_ledger_salts.
---     Deleting a booking deletes its salt (crypto-shredding): the immutable
---     ledger then no longer links to the personal data, which keeps erasure
---     possible.
+--     enter the ledger, not even hashed. The event carries
+--     detail_commit = BLAKE3(ciphertext || salt): ciphertext is the decoded RVE1
+--     envelope of the booking's sealed host copy in public.booking_payloads (the
+--     same bytes as blake3_payload_hash; empty while the booking has none), salt
+--     a 256-bit value per booking in booking_ledger_salts. No plaintext column of
+--     public.bookings is an input. BLAKE3 runs in PL/pgSQL (rout_blake3), checked
+--     byte for byte against @noble/hashes by the PGlite test.
+--     A change of the sealed copy appends a 'sealed' event; a change of a legacy
+--     plaintext column appends 'updated' with the commitment unchanged.
+--     Deleting a booking deletes its salt and its ciphertext (crypto-shredding):
+--     the commitments stay in the chain, but nothing can be tested against them
+--     any more, which keeps erasure possible.
 --   * Ed25519 signatures come from the server (ROUT_BOOKING_LEDGER_SIGNING_KEY),
 --     never from the database: booking_event_attestations only stores them.
 --     The signer extends only from a predecessor it has itself signed, so a
@@ -25,7 +32,8 @@
 -- rout_app gets no table rights at all, only the owner-scoped functions below
 -- (host = rout.current_user_id) and one session-less function that returns
 -- nothing but host ids with unsigned events. Existing bookings are imported
--- as 'imported' events. Only adds objects: nothing existing is changed.
+-- as 'imported' events. Only adds objects (tables, functions, and capture
+-- triggers on bookings and booking_payloads): nothing existing is changed.
 
 -- ------------------------------------------------------------------ tables
 create table if not exists public.booking_events (
@@ -37,7 +45,7 @@ create table if not exists public.booking_events (
   event_type_id    uuid        not null,
   workspace_id     uuid,
   kind             text        not null check (kind in ('imported', 'created', 'status_changed', 'rescheduled', 'updated',
-                                                         'transferred_in', 'transferred_out', 'deleted')),
+                                                         'sealed', 'transferred_in', 'transferred_out', 'deleted')),
   status           text        not null,
   start_utc        timestamptz not null,
   end_utc          timestamptz not null,
@@ -143,19 +151,199 @@ language sql immutable set search_path = pg_catalog, pg_temp as $$
   select pg_catalog.sha256(e.prev_hash || pg_catalog.convert_to(public.rout_booking_ledger_preimage(e), 'UTF8'))
 $$;
 
--- Commitment to the private fields of a booking row (never stored in the ledger).
-create or replace function public.rout_booking_detail_commit(b public.bookings, p_salt bytea) returns bytea
-language sql immutable set search_path = pg_catalog, pg_temp as $$
-  select pg_catalog.sha256(p_salt || pg_catalog.convert_to('rout.booking-detail.v1'
-    || public.rout_ledger_field(b.guest_name)
-    || public.rout_ledger_field(b.guest_email)
-    || public.rout_ledger_field(b.guest_timezone)
-    || public.rout_ledger_field(b.guest_note)
-    || public.rout_ledger_field(b.intake_answers::text)
-    || public.rout_ledger_field(b.stripe_checkout_session_id)
-    || public.rout_ledger_field(public.rout_ledger_ts(b.hold_expires_at))
-    || public.rout_ledger_field(b.shared_slot::text)
-    || public.rout_ledger_field(b.ics_uid), 'UTF8'))
+-- ------------------------------------------------------------------ BLAKE3
+-- BLAKE3 (default hash mode, 32-byte output) in PL/pgSQL: PostgreSQL has no
+-- built-in BLAKE3. Pure functions; the PGlite test compares them with
+-- @noble/hashes on every chunk/block boundary and on random inputs.
+-- One BLAKE3 compression (7 rounds). Words are uint32 held in bigint and masked with k.
+create or replace function public.rout_blake3_compress(cv bigint[], m bigint[], p_counter bigint, p_len integer, p_flags integer)
+returns bigint[] language plpgsql immutable strict set search_path = pg_catalog, pg_temp as $$
+declare
+  k constant bigint := 4294967295;
+  v0 bigint := cv[1];
+  v1 bigint := cv[2];
+  v2 bigint := cv[3];
+  v3 bigint := cv[4];
+  v4 bigint := cv[5];
+  v5 bigint := cv[6];
+  v6 bigint := cv[7];
+  v7 bigint := cv[8];
+  v8 bigint := 1779033703;
+  v9 bigint := 3144134277;
+  v10 bigint := 1013904242;
+  v11 bigint := 2773480762;
+  v12 bigint := p_counter & 4294967295;
+  v13 bigint := (p_counter >> 32) & 4294967295;
+  v14 bigint := p_len;
+  v15 bigint := p_flags;
+  m0 bigint := m[1];
+  m1 bigint := m[2];
+  m2 bigint := m[3];
+  m3 bigint := m[4];
+  m4 bigint := m[5];
+  m5 bigint := m[6];
+  m6 bigint := m[7];
+  m7 bigint := m[8];
+  m8 bigint := m[9];
+  m9 bigint := m[10];
+  m10 bigint := m[11];
+  m11 bigint := m[12];
+  m12 bigint := m[13];
+  m13 bigint := m[14];
+  m14 bigint := m[15];
+  m15 bigint := m[16];
+  t0 bigint;
+  t1 bigint;
+  t2 bigint;
+  t3 bigint;
+  t4 bigint;
+  t5 bigint;
+  t6 bigint;
+  t7 bigint;
+  t8 bigint;
+  t9 bigint;
+  t10 bigint;
+  t11 bigint;
+  t12 bigint;
+  t13 bigint;
+  t14 bigint;
+  t15 bigint;
+  r integer;
+begin
+  for r in 1 .. 7 loop
+    -- G(0, 4, 8, 12, m0, m1)
+    v0 := (v0 + v4 + m0) & k; v12 := (((v12 # v0) >> 16) | ((v12 # v0) << 16)) & k;
+    v8 := (v8 + v12) & k; v4 := (((v4 # v8) >> 12) | ((v4 # v8) << 20)) & k;
+    v0 := (v0 + v4 + m1) & k; v12 := (((v12 # v0) >> 8) | ((v12 # v0) << 24)) & k;
+    v8 := (v8 + v12) & k; v4 := (((v4 # v8) >> 7) | ((v4 # v8) << 25)) & k;
+    -- G(1, 5, 9, 13, m2, m3)
+    v1 := (v1 + v5 + m2) & k; v13 := (((v13 # v1) >> 16) | ((v13 # v1) << 16)) & k;
+    v9 := (v9 + v13) & k; v5 := (((v5 # v9) >> 12) | ((v5 # v9) << 20)) & k;
+    v1 := (v1 + v5 + m3) & k; v13 := (((v13 # v1) >> 8) | ((v13 # v1) << 24)) & k;
+    v9 := (v9 + v13) & k; v5 := (((v5 # v9) >> 7) | ((v5 # v9) << 25)) & k;
+    -- G(2, 6, 10, 14, m4, m5)
+    v2 := (v2 + v6 + m4) & k; v14 := (((v14 # v2) >> 16) | ((v14 # v2) << 16)) & k;
+    v10 := (v10 + v14) & k; v6 := (((v6 # v10) >> 12) | ((v6 # v10) << 20)) & k;
+    v2 := (v2 + v6 + m5) & k; v14 := (((v14 # v2) >> 8) | ((v14 # v2) << 24)) & k;
+    v10 := (v10 + v14) & k; v6 := (((v6 # v10) >> 7) | ((v6 # v10) << 25)) & k;
+    -- G(3, 7, 11, 15, m6, m7)
+    v3 := (v3 + v7 + m6) & k; v15 := (((v15 # v3) >> 16) | ((v15 # v3) << 16)) & k;
+    v11 := (v11 + v15) & k; v7 := (((v7 # v11) >> 12) | ((v7 # v11) << 20)) & k;
+    v3 := (v3 + v7 + m7) & k; v15 := (((v15 # v3) >> 8) | ((v15 # v3) << 24)) & k;
+    v11 := (v11 + v15) & k; v7 := (((v7 # v11) >> 7) | ((v7 # v11) << 25)) & k;
+    -- G(0, 5, 10, 15, m8, m9)
+    v0 := (v0 + v5 + m8) & k; v15 := (((v15 # v0) >> 16) | ((v15 # v0) << 16)) & k;
+    v10 := (v10 + v15) & k; v5 := (((v5 # v10) >> 12) | ((v5 # v10) << 20)) & k;
+    v0 := (v0 + v5 + m9) & k; v15 := (((v15 # v0) >> 8) | ((v15 # v0) << 24)) & k;
+    v10 := (v10 + v15) & k; v5 := (((v5 # v10) >> 7) | ((v5 # v10) << 25)) & k;
+    -- G(1, 6, 11, 12, m10, m11)
+    v1 := (v1 + v6 + m10) & k; v12 := (((v12 # v1) >> 16) | ((v12 # v1) << 16)) & k;
+    v11 := (v11 + v12) & k; v6 := (((v6 # v11) >> 12) | ((v6 # v11) << 20)) & k;
+    v1 := (v1 + v6 + m11) & k; v12 := (((v12 # v1) >> 8) | ((v12 # v1) << 24)) & k;
+    v11 := (v11 + v12) & k; v6 := (((v6 # v11) >> 7) | ((v6 # v11) << 25)) & k;
+    -- G(2, 7, 8, 13, m12, m13)
+    v2 := (v2 + v7 + m12) & k; v13 := (((v13 # v2) >> 16) | ((v13 # v2) << 16)) & k;
+    v8 := (v8 + v13) & k; v7 := (((v7 # v8) >> 12) | ((v7 # v8) << 20)) & k;
+    v2 := (v2 + v7 + m13) & k; v13 := (((v13 # v2) >> 8) | ((v13 # v2) << 24)) & k;
+    v8 := (v8 + v13) & k; v7 := (((v7 # v8) >> 7) | ((v7 # v8) << 25)) & k;
+    -- G(3, 4, 9, 14, m14, m15)
+    v3 := (v3 + v4 + m14) & k; v14 := (((v14 # v3) >> 16) | ((v14 # v3) << 16)) & k;
+    v9 := (v9 + v14) & k; v4 := (((v4 # v9) >> 12) | ((v4 # v9) << 20)) & k;
+    v3 := (v3 + v4 + m15) & k; v14 := (((v14 # v3) >> 8) | ((v14 # v3) << 24)) & k;
+    v9 := (v9 + v14) & k; v4 := (((v4 # v9) >> 7) | ((v4 # v9) << 25)) & k;
+    -- message permutation [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8]
+    t0 := m2; t1 := m6; t2 := m3; t3 := m10; t4 := m7; t5 := m0; t6 := m4; t7 := m13;
+    t8 := m1; t9 := m11; t10 := m12; t11 := m5; t12 := m9; t13 := m14; t14 := m15; t15 := m8;
+    m0 := t0; m1 := t1; m2 := t2; m3 := t3; m4 := t4; m5 := t5; m6 := t6; m7 := t7;
+    m8 := t8; m9 := t9; m10 := t10; m11 := t11; m12 := t12; m13 := t13; m14 := t14; m15 := t15;
+  end loop;
+  return array[v0 # v8, v1 # v9, v2 # v10, v3 # v11, v4 # v12, v5 # v13, v6 # v14, v7 # v15];
+end $$;
+
+-- 64-byte block (zero-padded) to 16 little-endian words.
+create or replace function public.rout_blake3_words(p bytea) returns bigint[]
+language plpgsql immutable strict set search_path = pg_catalog, pg_temp as $$
+declare
+  w bigint[] := pg_catalog.array_fill(0::bigint, array[16]);
+  i integer;
+begin
+  for i in 0 .. pg_catalog.octet_length(p) - 1 loop
+    w[i / 4 + 1] := w[i / 4 + 1] | (pg_catalog.get_byte(p, i)::bigint << (8 * (i % 4)));
+  end loop;
+  return w;
+end $$;
+
+-- Chunks of 1024 bytes, blocks of 64, binary tree of chunk chaining values.
+create or replace function public.rout_blake3(p bytea) returns bytea
+language plpgsql immutable strict set search_path = pg_catalog, pg_temp as $$
+declare
+  iv constant bigint[] := array[1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]::bigint[];
+  n integer := pg_catalog.octet_length(p);
+  nchunks integer := greatest((n + 1023) / 1024, 1);
+  stack bigint[] := '{}';
+  depth integer := 0;
+  ch integer; clen integer; nblocks integer; b integer; blk bytea; total bigint;
+  cv bigint[]; o_cv bigint[]; o_m bigint[]; o_ctr bigint; o_len integer; o_flags integer;
+  r bytea := pg_catalog.decode(pg_catalog.repeat('00', 32), 'hex');
+  i integer;
+begin
+  for ch in 0 .. nchunks - 1 loop
+    clen := least(1024, n - ch * 1024);
+    nblocks := greatest((clen + 63) / 64, 1);
+    cv := iv;
+    for b in 0 .. nblocks - 1 loop
+      blk := pg_catalog.substr(p, ch * 1024 + b * 64 + 1, least(64, clen - b * 64));
+      o_cv := cv;
+      o_m := public.rout_blake3_words(blk);
+      o_ctr := ch;
+      o_len := pg_catalog.octet_length(blk);
+      o_flags := (case when b = 0 then 1 else 0 end) | (case when b = nblocks - 1 then 2 else 0 end);
+      if b < nblocks - 1 then
+        cv := public.rout_blake3_compress(o_cv, o_m, o_ctr, o_len, o_flags);
+      end if;
+    end loop;
+    if ch < nchunks - 1 then
+      cv := public.rout_blake3_compress(o_cv, o_m, o_ctr, o_len, o_flags);
+      total := ch + 1;
+      while (total & 1) = 0 loop
+        cv := public.rout_blake3_compress(iv, stack[(depth - 1) * 8 + 1 : depth * 8] || cv, 0, 64, 4);
+        stack := stack[1 : (depth - 1) * 8];
+        depth := depth - 1;
+        total := total >> 1;
+      end loop;
+      stack := stack || cv;
+      depth := depth + 1;
+    end if;
+  end loop;
+  while depth > 0 loop
+    cv := public.rout_blake3_compress(o_cv, o_m, o_ctr, o_len, o_flags);
+    o_cv := iv;
+    o_m := stack[(depth - 1) * 8 + 1 : depth * 8] || cv;
+    o_ctr := 0;
+    o_len := 64;
+    o_flags := 4;
+    stack := stack[1 : (depth - 1) * 8];
+    depth := depth - 1;
+  end loop;
+  cv := public.rout_blake3_compress(o_cv, o_m, o_ctr, o_len, o_flags | 8);
+  for i in 0 .. 31 loop
+    r := pg_catalog.set_byte(r, i, ((cv[i / 4 + 1] >> (8 * (i % 4))) & 255)::integer);
+  end loop;
+  return r;
+end $$;
+
+-- Bytes of a base64url envelope (db/0278 stores them unpadded).
+create or replace function public.rout_rve1_bytes(p text) returns bytea
+language sql immutable strict set search_path = pg_catalog, pg_temp as $$
+  select pg_catalog.decode(pg_catalog.translate(p, '-_', '+/') || pg_catalog.repeat('=', (4 - pg_catalog.length(p) % 4) % 4), 'base64')
+$$;
+
+-- detail_commit = BLAKE3(ciphertext || salt). Only ciphertext and salt are
+-- inputs, never a plaintext column; no sealed copy means empty ciphertext.
+create or replace function public.rout_booking_detail_commit(p_booking uuid, p_salt bytea) returns bytea
+language sql stable set search_path = pg_catalog, pg_temp as $$
+  select public.rout_blake3(coalesce((select public.rout_rve1_bytes(bp.encrypted_rve1_payload)
+                                        from public.booking_payloads bp where bp.booking_id = p_booking), ''::bytea) || p_salt)
 $$;
 
 -- ------------------------------------------------------------------ append (internal)
@@ -210,43 +398,79 @@ end $$;
 create or replace function public.rout_booking_ledger_capture() returns trigger
 language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 declare
-  v_salt bytea;
-  v_old bytea;
-  v_new bytea;
+  v_kind text;
+  v_commit bytea;
 begin
   if tg_op = 'INSERT' then
-    v_salt := public.rout_booking_ledger_salt(new.id);
-    perform public.rout_booking_ledger_append(new, 'created', public.rout_booking_detail_commit(new, v_salt));
+    perform public.rout_booking_ledger_append(new, 'created',
+      public.rout_booking_detail_commit(new.id, public.rout_booking_ledger_salt(new.id)));
+    return null;
   elsif tg_op = 'DELETE' then
     perform public.rout_booking_ledger_append(old, 'deleted', null);
-  else
-    v_salt := public.rout_booking_ledger_salt(new.id);
-    if new.id <> old.id then
-      raise exception 'booking_id_immutable' using errcode = '42501';
-    end if;
-    v_new := public.rout_booking_detail_commit(new, v_salt);
-    if new.host_user_id <> old.host_user_id then
-      perform public.rout_booking_ledger_append(old, 'transferred_out', null);
-      perform public.rout_booking_ledger_append(new, 'transferred_in', v_new);
-      return null;
-    end if;
-    v_old := public.rout_booking_detail_commit(old, v_salt);
-    if new.status is distinct from old.status then
-      perform public.rout_booking_ledger_append(new, 'status_changed', v_new);
-    elsif (new.start_utc, new.end_utc, new.block_start_utc, new.block_end_utc)
-          is distinct from (old.start_utc, old.end_utc, old.block_start_utc, old.block_end_utc) then
-      perform public.rout_booking_ledger_append(new, 'rescheduled', v_new);
-    elsif v_new <> v_old or (new.sequence, new.event_type_id, new.group_id, new.workspace_id)
-          is distinct from (old.sequence, old.event_type_id, old.group_id, old.workspace_id) then
-      perform public.rout_booking_ledger_append(new, 'updated', v_new);
-    end if;
+    return null;
   end if;
+  if new.id <> old.id then
+    raise exception 'booking_id_immutable' using errcode = '42501';
+  end if;
+  if new.host_user_id <> old.host_user_id then
+    v_kind := 'transferred_in';
+  elsif new.status is distinct from old.status then
+    v_kind := 'status_changed';
+  elsif (new.start_utc, new.end_utc, new.block_start_utc, new.block_end_utc)
+        is distinct from (old.start_utc, old.end_utc, old.block_start_utc, old.block_end_utc) then
+    v_kind := 'rescheduled';
+  -- Plaintext columns only decide whether something changed; they never enter a hash.
+  elsif (new.sequence, new.event_type_id, new.group_id, new.workspace_id)
+          is distinct from (old.sequence, old.event_type_id, old.group_id, old.workspace_id)
+     or (new.guest_name, new.guest_email, new.guest_timezone, new.guest_note, new.intake_answers,
+         new.stripe_checkout_session_id, new.hold_expires_at, new.shared_slot, new.ics_uid)
+          is distinct from (old.guest_name, old.guest_email, old.guest_timezone, old.guest_note, old.intake_answers,
+         old.stripe_checkout_session_id, old.hold_expires_at, old.shared_slot, old.ics_uid) then
+    v_kind := 'updated';
+  else
+    return null;
+  end if;
+  v_commit := public.rout_booking_detail_commit(new.id, public.rout_booking_ledger_salt(new.id));
+  if v_kind = 'transferred_in' then
+    perform public.rout_booking_ledger_append(old, 'transferred_out', null);
+  end if;
+  perform public.rout_booking_ledger_append(new, v_kind, v_commit);
   return null;
 end $$;
 
 drop trigger if exists bookings_ledger_capture on public.bookings;
 create trigger bookings_ledger_capture after insert or update or delete on public.bookings
   for each row execute function public.rout_booking_ledger_capture();
+
+-- The sealed copy changes the commitment: one 'sealed' event per new, replaced
+-- or removed ciphertext while the booking exists. When the booking itself is
+-- deleted (cascade) its 'deleted' event closes the record instead.
+create or replace function public.rout_booking_ledger_payload_capture() returns trigger
+language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+declare
+  b public.bookings;
+begin
+  if tg_op = 'UPDATE' then
+    if new.booking_id <> old.booking_id then
+      raise exception 'booking_id_immutable' using errcode = '42501';
+    end if;
+    if new.encrypted_rve1_payload = old.encrypted_rve1_payload then
+      return null;
+    end if;
+  end if;
+  select * into b from public.bookings x
+   where x.id = case when tg_op = 'DELETE' then old.booking_id else new.booking_id end;
+  if not found then
+    return null;
+  end if;
+  perform public.rout_booking_ledger_append(b, 'sealed',
+    public.rout_booking_detail_commit(b.id, public.rout_booking_ledger_salt(b.id)));
+  return null;
+end $$;
+
+drop trigger if exists booking_payloads_ledger_capture on public.booking_payloads;
+create trigger booking_payloads_ledger_capture after insert or update or delete on public.booking_payloads
+  for each row execute function public.rout_booking_ledger_payload_capture();
 
 -- ------------------------------------------------------------------ owner-scoped reads
 create or replace function public.rout_booking_ledger_caller() returns uuid
@@ -334,7 +558,7 @@ begin
                   is distinct from
                   (l.status, l.start_utc, l.end_utc, l.block_start_utc, l.block_end_utc, l.ics_sequence, l.event_type_id, l.group_id, l.workspace_id)
                   or s.salt is null
-                  or public.rout_booking_detail_commit(b, s.salt) <> l.detail_commit) then 'mismatch'
+                  or public.rout_booking_detail_commit(b.id, s.salt) <> l.detail_commit) then 'mismatch'
          end
     from (select x.* from public.bookings x where x.host_user_id = v_host) b
     full join last_event l on l.booking_id = b.id
@@ -347,7 +571,7 @@ begin
             is distinct from
             (l.status, l.start_utc, l.end_utc, l.block_start_utc, l.block_end_utc, l.ics_sequence, l.event_type_id, l.group_id, l.workspace_id)
             or s.salt is null
-            or public.rout_booking_detail_commit(b, s.salt) <> l.detail_commit));
+            or public.rout_booking_detail_commit(b.id, s.salt) <> l.detail_commit));
 end $$;
 
 -- ------------------------------------------------------------------ signing
@@ -408,7 +632,7 @@ begin
   for b in select * from public.bookings x
             where not exists (select 1 from public.booking_events e where e.booking_id = x.id)
             order by x.created_at, x.id loop
-    perform public.rout_booking_ledger_append(b, 'imported', public.rout_booking_detail_commit(b, public.rout_booking_ledger_salt(b.id)));
+    perform public.rout_booking_ledger_append(b, 'imported', public.rout_booking_detail_commit(b.id, public.rout_booking_ledger_salt(b.id)));
   end loop;
 end $$;
 
@@ -422,8 +646,13 @@ begin
     'public.rout_booking_ledger_append(public.bookings, text, bytea)',
     'public.rout_booking_ledger_salt(uuid)',
     'public.rout_booking_ledger_capture()',
+    'public.rout_booking_ledger_payload_capture()',
     'public.rout_booking_ledger_caller()',
-    'public.rout_booking_detail_commit(public.bookings, bytea)',
+    'public.rout_booking_detail_commit(uuid, bytea)',
+    'public.rout_blake3_compress(bigint[], bigint[], bigint, integer, integer)',
+    'public.rout_blake3_words(bytea)',
+    'public.rout_blake3(bytea)',
+    'public.rout_rve1_bytes(text)',
     'public.rout_ledger_field(text)',
     'public.rout_ledger_ts(timestamptz)',
     'public.rout_booking_ledger_genesis(uuid)',
@@ -451,6 +680,7 @@ begin
   end loop;
   if exists (select 1 from pg_catalog.pg_roles where rolname = 'rout_app') and (
        pg_catalog.has_function_privilege('rout_app', 'public.rout_booking_ledger_append(public.bookings, text, bytea)', 'execute')
+    or pg_catalog.has_function_privilege('rout_app', 'public.rout_booking_detail_commit(uuid, bytea)', 'execute')
     or pg_catalog.has_table_privilege('rout_app', 'public.booking_events', 'select')
     or pg_catalog.has_table_privilege('rout_app', 'public.booking_ledger_salts', 'select')) then
     raise exception 'rout_app can still reach the booking ledger directly';

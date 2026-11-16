@@ -8,10 +8,17 @@
  * code points exactly like Postgres char_length. The server signs
  * "rout.booking-ledger.v1.attest" || entry_hash with Ed25519.
  *
+ * detail_commit = BLAKE3(ciphertext || salt): ciphertext is the decoded RVE1
+ * envelope of the booking's sealed host copy (empty when there is none), salt
+ * the booking's 32-byte ledger salt, which only the database holds. No
+ * plaintext booking field is ever an input (`detailCommit` below is the same
+ * function as SQL public.rout_booking_detail_commit).
+ *
  * Trust comes only from public keys configured outside the database: a
  * signature by any other key, or a key listed in the database, proves nothing.
  */
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { blake3 } from "@noble/hashes/blake3.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 
@@ -19,7 +26,7 @@ export const LEDGER_TAG = "rout.booking-ledger.v1";
 export const ATTEST_TAG = "rout.booking-ledger.v1.attest";
 
 export const LEDGER_KINDS = [
-  "imported", "created", "status_changed", "rescheduled", "updated", "transferred_in", "transferred_out", "deleted",
+  "imported", "created", "status_changed", "rescheduled", "updated", "sealed", "transferred_in", "transferred_out", "deleted",
 ] as const;
 export type LedgerKind = (typeof LEDGER_KINDS)[number];
 
@@ -115,6 +122,17 @@ export function parsePreimage(preimage: string): LedgerEvent {
     throw new LedgerFormatError("detail_commit");
   }
   return event;
+}
+
+export const LEDGER_SALT_BYTES = 32;
+
+/** BLAKE3(ciphertext || salt), identical to SQL public.rout_booking_detail_commit. */
+export function detailCommit(ciphertext: Uint8Array, salt: Uint8Array): Uint8Array {
+  if (salt.length !== LEDGER_SALT_BYTES) throw new LedgerFormatError("salt");
+  const buf = new Uint8Array(ciphertext.length + salt.length);
+  buf.set(ciphertext, 0);
+  buf.set(salt, ciphertext.length);
+  return blake3(buf);
 }
 
 export function genesisHash(hostUserId: string): Uint8Array {
