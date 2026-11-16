@@ -485,6 +485,14 @@ export interface PublicBadgesRow {
   "max_supply": number | null;
 }
 
+export interface PublicBookingEventAttestationsRow {
+  "host_user_id": string;
+  "host_seq": string;
+  "key_id": string;
+  "signature": Uint8Array;
+  "signed_at": string | Date;
+}
+
 export interface PublicBookingEventTypeHostsRow {
   "event_type_id": string;
   "user_id": string;
@@ -525,6 +533,27 @@ export interface PublicBookingEventTypesRow {
   "rules_timezone": string | null;
 }
 
+export interface PublicBookingEventsRow {
+  "host_user_id": string;
+  "host_seq": string;
+  "occurred_at": string | Date;
+  "booking_id": string;
+  "group_id": string | null;
+  "event_type_id": string;
+  "workspace_id": string | null;
+  "kind": string;
+  "status": string;
+  "start_utc": string | Date;
+  "end_utc": string | Date;
+  "block_start_utc": string | Date;
+  "block_end_utc": string | Date;
+  "ics_sequence": number;
+  "detail_commit": Uint8Array | null;
+  "actor_user_id": string | null;
+  "prev_hash": Uint8Array;
+  "entry_hash": Uint8Array;
+}
+
 export interface PublicBookingHoldsRow {
   "hold_id": string;
   "host_user_id": string;
@@ -548,6 +577,11 @@ export interface PublicBookingHostKeysRow {
   "key_id": string;
   "created_at": string | Date;
   "updated_at": string | Date;
+}
+
+export interface PublicBookingLedgerSaltsRow {
+  "booking_id": string;
+  "salt": Uint8Array;
 }
 
 export interface PublicBookingPayloadsRow {
@@ -2647,10 +2681,13 @@ export interface DbTables {
   "public.badge_claim_redemptions": PublicBadgeClaimRedemptionsRow;
   "public.badge_events": PublicBadgeEventsRow;
   "public.badges": PublicBadgesRow;
+  "public.booking_event_attestations": PublicBookingEventAttestationsRow;
   "public.booking_event_type_hosts": PublicBookingEventTypeHostsRow;
   "public.booking_event_types": PublicBookingEventTypesRow;
+  "public.booking_events": PublicBookingEventsRow;
   "public.booking_holds": PublicBookingHoldsRow;
   "public.booking_host_keys": PublicBookingHostKeysRow;
+  "public.booking_ledger_salts": PublicBookingLedgerSaltsRow;
   "public.booking_payloads": PublicBookingPayloadsRow;
   "public.booking_requests": PublicBookingRequestsRow;
   "public.bookings": PublicBookingsRow;
