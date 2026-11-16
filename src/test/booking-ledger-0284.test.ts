@@ -627,20 +627,22 @@ describe("0284 booking ledger (fast-check properties)", () => {
           return s.slice(0, at) + (c === alphabet[0] ? alphabet[1] : alphabet[0]) + s.slice(at + 1);
         };
         let rows = orig.map((r) => ({ ...r }));
-        let effective: Tamper = kind === "swap" && n < 2 ? "entry_hash" : kind;
+        const effective: Tamper = kind === "swap" && n < 2 ? "entry_hash" : kind;
+        let seq = i + 1; // where the verifier must stop: the first entry that is no longer original
         switch (effective) {
           case "preimage": rows[i]!.preimage = flip(rows[i]!.preimage, b % rows[i]!.preimage.length, "01"); break;
           case "prev_hash": rows[i]!.prev_hash = flip(rows[i]!.prev_hash, b % 64, "ab"); break;
           case "entry_hash": rows[i]!.entry_hash = flip(rows[i]!.entry_hash, b % 64, "ab"); break;
-          case "drop": rows = rows.filter((_, j) => j !== i); break;
+          case "drop": rows = rows.filter((_, j) => j !== i); seq = i + 2; break;
           case "swap": {
             const j = (i + 1 + (b % (n - 1))) % n;
             const ri = rows[i]!, rj = rows[j]!;
             rows[i] = { ...rj, host_seq: ri.host_seq };
             rows[j] = { ...ri, host_seq: rj.host_seq };
+            seq = Math.min(i, j) + 1;
             break;
           }
-          case "append": rows.push({ ...rows[i]!, host_seq: n + 1 }); break;
+          case "append": rows.push({ ...rows[i]!, host_seq: n + 1 }); seq = n + 1; break;
           case "rewrite": {
             // Recompute every hash from i on: only an anchored head or signature can catch this.
             let prev = i === 0 ? genesisHash(host) : hexToBytes(rows[i - 1]!.entry_hash);
@@ -661,7 +663,6 @@ describe("0284 booking ledger (fast-check properties)", () => {
           if (effective === "rewrite") expect(rows[i]!.entry_hash).not.toBe(orig[i]!.entry_hash);
         } else {
           expect(v.broken).not.toBeNull();
-          const seq = effective === "append" ? n + 1 : effective === "drop" ? i + 2 : i + 1;
           expect(v.broken!.seq).toBe(seq); // flagged at the tampered entry itself
         }
       }),
