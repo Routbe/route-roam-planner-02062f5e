@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
- * db-pending/0284: the booking ledger. Replays db/ (0000-0283) on PGlite,
- * applies the held-back 0284 on top, and checks:
+ * db/0284: the booking ledger. Replays db/ up to 0283 on PGlite, inserts a
+ * pre-existing booking, applies 0284 with the definer guard, and checks:
  *   - rout_app has no direct rights on the ledger tables;
  *   - BLAKE3 in SQL equals @noble/hashes byte for byte, and
  *     detail_commit = BLAKE3(ciphertext || salt) with no plaintext input;
@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { listMigrationFiles, planMigrations } from "../../scripts/migration-plan";
-import { isPinned, searchPathFromConfig } from "../../scripts/security-definer-policy";
+import { isPinned, migrationDefinerGuardSql, searchPathFromConfig } from "../../scripts/security-definer-policy";
 import { b64uDecode, b64uEncode } from "@/lib/booking-engine/sealed-booking";
 import {
   detailCommit, encodePreimage, entryHash, genesisHash, ledgerKeyId, parsePreimage, planSignatures, signEntry,
@@ -35,7 +35,8 @@ import {
 
 const ROOT = join(__dirname, "..", "..");
 const DB_DIR = join(ROOT, "db");
-const LEDGER_SQL = readFileSync(join(ROOT, "db-pending", "0284_booking_ledger.sql"), "utf8");
+const LEDGER_FILE = "0284_booking_ledger.sql";
+const LEDGER_SQL = readFileSync(join(DB_DIR, LEDGER_FILE), "utf8");
 
 const HOST = "00000000-0000-4000-8000-0000000000a1";
 const OTHER = "00000000-0000-4000-8000-0000000000b1";
@@ -279,7 +280,10 @@ beforeAll(async () => {
   const { pgcrypto } = await import("@electric-sql/pglite/contrib/pgcrypto");
   db = new PGlite({ extensions: { pgcrypto, btree_gist } });
   for (const step of planMigrations(listMigrationFiles(DB_DIR), new Set())) {
-    if (step.action === "run") await db.exec(`begin;\n${readFileSync(join(DB_DIR, step.file), "utf8")}\n;commit;`);
+    // 0284 itself runs after PRE exists, so the import of existing bookings is exercised.
+    if (step.action === "run" && step.file !== LEDGER_FILE) {
+      await db.exec(`begin;\n${readFileSync(join(DB_DIR, step.file), "utf8")}\n;commit;`);
+    }
   }
   await db.exec(`
     insert into public.users (id, email) values ('${HOST}', 'host@example.test'), ('${OTHER}', 'other@example.test'),
@@ -287,7 +291,7 @@ beforeAll(async () => {
     insert into public.booking_event_types (id, user_id, slug, title, duration_minutes, minimum_notice_hours)
       values ('${ET}', '${HOST}', 'intro', 'Intro', 30, 0);`);
   await insertBooking(PRE, 8);
-  await db.exec(`begin;\n${LEDGER_SQL}\n;commit;`);
+  await db.exec(`begin;\n${LEDGER_SQL}\n;\n${migrationDefinerGuardSql(LEDGER_FILE)};commit;`);
 }, 300_000);
 
 afterAll(async () => {
