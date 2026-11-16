@@ -75,7 +75,7 @@
   - [x] 12 formaten + liggend, geen overflow/afsnijding/CLS, contrast AAA, tikdoelen 44px, animaties alleen transform/opacity
   - [x] Per pagina titels/omschrijvingen NL/EN/FR/DE + eigen deelafbeelding
 - [ ] Fase B: database (grootboek, agendakoppelingen, routering, locaties, annuleringsbeleid) — Neon pas na GO
-  - [ ] B1: booking_events — onveranderlijk grootboek, hash-keten + server-ondertekening, overzicht ↔ grootboek-controle (db/0265, alleen test)
+  - [ ] B1: booking_events — onveranderlijk grootboek, hash-keten + server-ondertekening, overzicht ↔ grootboek-controle (db-pending/0284, PGlite-test groen)
   - [ ] B2: agendakoppelingen Google/Microsoft/CalDAV — sleutels alleen als RVE1-envelop in vault_enclave (alleen test)
   - [ ] B3: publieke kant alleen anonieme tijdvakken/bitmasker (bevestigen + test)
   - [ ] B4: MCP-hulpmiddelen: vrije tijden lezen, reservering voorbereiden; bevestigen alleen na passkey/step-up van een mens
@@ -102,7 +102,7 @@
 - [x] Fase B: herstel aangesloten op scherm, opslag en herstel-login — nu als 3-van-4 (kaart tikken, 3 stukken kiezen)
 - [ ] Fase B: kaarten (her)personaliseren met #rk1-fragment (fabrieksstation) — fysieke kaarten nodig
 - [x] Fase B: versleutelde boekingsinhoud (bkh/bkg, ML-KEM-1024 + X25519, vaste emmers) — kern + tests
-- [ ] Fase B: 0265 grootboek aanpassen: vingerafdruk over versleutelde tekst i.p.v. platte velden
+- [ ] Fase B: 0284 grootboek aanpassen: vingerafdruk over versleutelde tekst i.p.v. platte velden
 - [ ] Fase B: migratie boekingsenveloppen + host-boekingssleutel (zaad onder werkruimtesleutel) + werker-ops
 - [ ] Fase B: gastcontact (e-mail) als kluisverwijzing + blinde index voor limieten per gast
 - [ ] Fase B+: vaste byte-lengtes (padding) en constante responstijden voor boekings- en bitmasker-API's

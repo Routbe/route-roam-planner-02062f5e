@@ -1,5 +1,5 @@
 /**
- * Booking ledger (db/0265) — pure, browser-safe verification.
+ * Booking ledger (db/0284) — pure, browser-safe verification.
  *
  * The database writes every change to a booking into a per-host hash chain:
  * entry_hash = SHA-256(prev_hash || UTF-8(preimage)), the first prev_hash being

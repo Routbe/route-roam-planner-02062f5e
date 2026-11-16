@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
- * db-pending/0265: the booking ledger. Replays db/ (0000-0283) on PGlite,
- * applies the held-back 0265 on top, and checks: rout_app has no direct
+ * db-pending/0284: the booking ledger. Replays db/ (0000-0283) on PGlite,
+ * applies the held-back 0284 on top, and checks: rout_app has no direct
  * rights on the ledger tables, every write to public.bookings appends to a
  * per-host hash chain that src/lib/booking-engine/ledger.ts verifies
  * byte for byte, and deleting a booking shreds its salt while the chain
@@ -19,12 +19,12 @@ import { entryHash, genesisHash, ledgerKeyId, parsePreimage, signEntry, verifyLe
 
 const ROOT = join(__dirname, "..", "..");
 const DB_DIR = join(ROOT, "db");
-const LEDGER_SQL = readFileSync(join(ROOT, "db-pending", "0265_booking_ledger.sql"), "utf8");
+const LEDGER_SQL = readFileSync(join(ROOT, "db-pending", "0284_booking_ledger.sql"), "utf8");
 
 const HOST = "00000000-0000-4000-8000-0000000000a1";
 const OTHER = "00000000-0000-4000-8000-0000000000b1";
 const ET = "00000000-0000-4000-8000-0000000000e1";
-const PRE = "00000000-0000-4000-8000-00000000f001"; // exists before 0265 runs: imported
+const PRE = "00000000-0000-4000-8000-00000000f001"; // exists before 0284 runs: imported
 const BK = "00000000-0000-4000-8000-00000000f002";
 
 const LEDGER_TABLES = ["booking_events", "booking_event_attestations", "booking_ledger_salts"];
@@ -81,7 +81,7 @@ afterAll(async () => {
   await db?.close();
 });
 
-describe("0265 booking ledger", () => {
+describe("0284 booking ledger", () => {
   it("imports bookings that existed before the migration", async () => {
     expect(await kinds()).toEqual(["imported"]);
   });
